@@ -27,14 +27,14 @@ const WORKER_URL = "https://spring-tracker-api.tonytopiko.workers.dev";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const START  = "2026-03-19";
-const END    = "2026-04-07";
+const END    = "2026-04-12";
 const DAY_JA = ["日","月","火","水","木","金","土"];
 
 const ACTS = [
   { id:"eitango", label:"英単語タイピング＋書く", pts:1, emoji:"⌨️", cat:"英語", desc:"計30分（両方やって1pt）" },
   { id:"bunpou",  label:"英文法",                  pts:2, emoji:"📖", cat:"英語", desc:"1レッスン（30〜45分）" },
   { id:"kimini",  label:"kimini 英会話",            pts:0, emoji:"🎤", cat:"英語", desc:"週でまとめて計算" },
-  { id:"kanji",   label:"漢字",                     pts:1, emoji:"🖊️", cat:"国語", desc:"30分（20個）" },
+  { id:"kanji",   label:"漢字",                     pts:1.5, emoji:"🖊️", cat:"国語", desc:"復習15分、漢字20個30分" },
   { id:"kobun",   label:"古文単語",                 pts:1, emoji:"📜", cat:"国語", desc:"30分" },
   { id:"dokkai",  label:"読解プリント",              pts:1, emoji:"🔍", cat:"国語", desc:"30分（1〜2枚）" },
 ];
@@ -205,7 +205,7 @@ function App() {
       <div style={s.savedPill(saved)}>✓ 保存済み</div>
 
       <div style={s.hdr}>
-        <div style={s.hdrSub}>SPRING BREAK 2026 · 3/19〜4/7 · 20日間</div>
+        <div style={s.hdrSub}>SPRING BREAK 2026 · 3/19〜4/12 · 25日間</div>
         <div style={s.hdrTitle}>🌸 春休みポイント管理表</div>
       </div>
 
