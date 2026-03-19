@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -149,7 +150,7 @@ function App() {
   };
 
   const calc = () => {
-    if (!data) return { earned:0, usedCash:0, usedVideo:0, used:0, balance:0 };
+    if (!data) return { earned:0, usedVideo:0, balance:0 };
     let earned = 0;
     ALL_DATES.forEach(d => {
       const log = data.daily[d] || {};
@@ -159,9 +160,8 @@ function App() {
       earned += kiminiPts(data.daily, WEEKS[wk]);
       if (data.weeklyBonus[wk]?.eitango) earned += 3;
     });
-    const usedCash  = data.cashUsed || 0;
     const usedVideo = Object.values(data.videoUsed||{}).reduce((s,h)=>s+h*2,0);
-    return { earned, usedCash, usedVideo, used: usedCash+usedVideo, balance: earned-usedCash-usedVideo };
+    return { earned, usedVideo, balance: earned-usedVideo };
   };
 
   if (loading) return (
@@ -213,7 +213,7 @@ function App() {
       <div style={s.statsBar}>
         {[
           { label:"獲得合計", val:pts.earned,      unit:"pt",  color:"#1e3350" },
-          { label:"使用済み", val:pts.used,         unit:"pt",  color:"#f28b6e" },
+          { label:"動画使用", val:pts.usedVideo,   unit:"pt",  color:"#f28b6e" },
           { label:"残り",     val:pts.balance,      unit:"pt",  color:"#3aafa9" },
           { label:"💴 現金",   val:pts.balance*30,  unit:"円",  color:"#d4900a" },
         ].map(({ label, val, unit, color }, i) => (
@@ -410,31 +410,32 @@ function WeeklyTab({ data }) {
 
 // ─── Use Tab ──────────────────────────────────────────────────────────────────
 function UseTab({ data, save, pts }) {
-  const [cashAmt, setCashAmt] = useState("");
   const [videoWk, setVideoWk] = useState(WEEK_KEYS[0]);
   const [videoHr, setVideoHr] = useState(1);
+  const [videoUndoHr, setVideoUndoHr] = useState(0.5);
   const [msg, setMsg] = useState("");
+  const [msgColor, setMsgColor] = useState("#3aafa9");
 
-  const notice = (m) => { setMsg(m); setTimeout(()=>setMsg(""),2500); };
-
-  const addCash = () => {
-    const n = parseInt(cashAmt);
-    if (!n||n<=0) return notice("ポイント数を入力してね");
-    if (n > pts.balance) return notice(`残り${pts.balance}ptしかないよ！`);
-    save({ ...data, cashUsed:(data.cashUsed||0)+n });
-    setCashAmt("");
-    notice(`${n}pt → ${n*30}円に交換したよ！`);
-  };
+  const notice = (m, color="#3aafa9") => { setMsg(m); setMsgColor(color); setTimeout(()=>setMsg(""),2500); };
 
   const addVideo = () => {
     const hr = parseFloat(videoHr)||0;
-    if (hr<=0) return notice("時間を入力してね");
+    if (hr<=0) return notice("時間を入力してね","#f28b6e");
     const currHr = data.videoUsed[videoWk]||0;
-    if (currHr+hr > 7) return notice(`今週はあと${7-currHr}時間しか見られないよ！`);
+    if (currHr+hr > 7) return notice(`今週はあと${7-currHr}時間しか見られないよ！`,"#f28b6e");
     const needPts = hr*2;
-    if (needPts > pts.balance) return notice(`${needPts}pt必要だけど残り${pts.balance}ptしかないよ！`);
+    if (needPts > pts.balance) return notice(`${needPts}pt必要だけど残り${pts.balance}ptしかないよ！`,"#f28b6e");
     save({ ...data, videoUsed:{ ...data.videoUsed, [videoWk]:(currHr+hr) } });
     notice(`${hr}時間記録したよ（${needPts}pt使用）`);
+  };
+
+  const undoVideo = () => {
+    const hr = parseFloat(videoUndoHr)||0;
+    if (hr<=0) return notice("取り消す時間を入力してね","#f28b6e");
+    const currHr = data.videoUsed[videoWk]||0;
+    if (hr > currHr) return notice(`この週の記録は${currHr}時間しかないよ！`,"#f28b6e");
+    save({ ...data, videoUsed:{ ...data.videoUsed, [videoWk]: Math.max(0, currHr - hr) } });
+    notice(`${hr}時間分を取り消したよ（${hr*2}pt戻り）`,"#e8a020");
   };
 
   return (
@@ -445,31 +446,13 @@ function UseTab({ data, save, pts }) {
         boxShadow:"0 3px 12px rgba(30,51,80,0.22)" }}>
         <span style={{ fontSize:"0.82rem", opacity:0.85 }}>残りポイント</span>
         <span style={{ fontWeight:900, fontSize:"1.2rem" }}>
-          {pts.balance}pt　<span style={{ fontSize:"0.9rem", opacity:0.8 }}>({pts.balance*30}円分)</span>
+          {pts.balance}pt　<span style={{ fontSize:"0.9rem", opacity:0.8 }}>= {pts.balance*30}円</span>
         </span>
       </div>
 
-      {msg && <div style={{ background:"#3aafa9", color:"white", borderRadius:10,
+      {msg && <div style={{ background:msgColor, color:"white", borderRadius:10,
         padding:"10px 14px", marginBottom:12, fontSize:"0.82rem", fontWeight:700,
-        textAlign:"center", boxShadow:"0 2px 8px rgba(58,175,169,0.3)" }}>{msg}</div>}
-
-      <Card title="💴 現金に交換する" sub="1ポイント＝30円">
-        <div style={{ display:"flex", gap:8, marginBottom:8 }}>
-          <input type="number" value={cashAmt} onChange={e=>setCashAmt(e.target.value)}
-            placeholder="ポイント数を入力" min={1}
-            style={{ flex:1, padding:"10px 12px", border:"2px solid #e8e8e8",
-              borderRadius:10, fontFamily:"inherit", fontSize:"0.9rem", outline:"none" }} />
-          <ActionBtn color="#1e3350" onClick={addCash}>交換</ActionBtn>
-        </div>
-        {cashAmt&&parseInt(cashAmt)>0 && (
-          <div style={{ fontSize:"0.75rem", color:"#3aafa9", marginBottom:8 }}>
-            → {parseInt(cashAmt)*30}円になるよ
-          </div>
-        )}
-        <div style={{ fontSize:"0.72rem", color:"#f28b6e" }}>
-          累計交換済み：{data.cashUsed}pt（{data.cashUsed*30}円）
-        </div>
-      </Card>
+        textAlign:"center" }}>{msg}</div>}
 
       <Card title="📺 動画を見る" sub="1時間＝2ポイント　週最大7時間まで（月〜日）">
         <div style={{ fontSize:"0.72rem", color:"#f28b6e", marginBottom:10 }}>
@@ -488,13 +471,24 @@ function UseTab({ data, save, pts }) {
               </option>;
             })}
           </select>
-          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:8 }}>
             <input type="number" value={videoHr} onChange={e=>setVideoHr(e.target.value)}
               min={0.5} max={7} step={0.5}
               style={{ flex:1, padding:"10px 12px", border:"2px solid #e8e8e8",
                 borderRadius:10, fontFamily:"inherit", fontSize:"0.9rem", outline:"none" }} />
             <span style={{ fontSize:"0.85rem", color:"#888", whiteSpace:"nowrap" }}>時間</span>
             <ActionBtn color="#3aafa9" onClick={addVideo}>記録</ActionBtn>
+          </div>
+          <div style={{ borderTop:"1px dashed #eee", paddingTop:10 }}>
+            <div style={{ fontSize:"0.72rem", color:"#aaa", marginBottom:6 }}>↩ 間違えた分を取り消す</div>
+            <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+              <input type="number" value={videoUndoHr} onChange={e=>setVideoUndoHr(e.target.value)}
+                min={0.5} max={7} step={0.5}
+                style={{ flex:1, padding:"9px 12px", border:"2px solid #f0e8e8",
+                  borderRadius:10, fontFamily:"inherit", fontSize:"0.9rem", outline:"none" }} />
+              <span style={{ fontSize:"0.85rem", color:"#888", whiteSpace:"nowrap" }}>時間</span>
+              <ActionBtn color="#c0766a" onClick={undoVideo}>取り消し</ActionBtn>
+            </div>
           </div>
         </div>
 
