@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🌸 春休みポイント管理表</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #fef9f0; }
+  input:focus { border-color: #3aafa9 !important; }
+  select { cursor: pointer; }
+  button { cursor: pointer; transition: opacity 0.15s; }
+  button:hover { opacity: 0.85; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+// ─── ★ここを自分のWorker URLに書き換えてください★ ──────────────────────────
+const WORKER_URL = "https://spring-tracker-api.tonytopiko.workers.dev";
+// ─────────────────────────────────────────────────────────────────────────────
+
+const START  = "2026-03-19";
+const END    = "2026-04-07";
+const DAY_JA = ["日","月","火","水","木","金","土"];
+
+const ACTS = [
+  { id:"eitango", label:"英単語タイピング＋書く", pts:1, emoji:"⌨️", cat:"英語", desc:"計30分（両方やって1pt）" },
+  { id:"bunpou",  label:"英文法",                  pts:2, emoji:"📖", cat:"英語", desc:"1レッスン（30〜45分）" },
+  { id:"kimini",  label:"kimini 英会話",            pts:0, emoji:"🎤", cat:"英語", desc:"週でまとめて計算" },
+  { id:"kanji",   label:"漢字",                     pts:1, emoji:"🖊️", cat:"国語", desc:"30分（20個）" },
+  { id:"kobun",   label:"古文単語",                 pts:1, emoji:"📜", cat:"国語", desc:"30分" },
+  { id:"dokkai",  label:"読解プリント",              pts:1, emoji:"🔍", cat:"国語", desc:"30分（1〜2枚）" },
+];
+
+const toKey = d => (typeof d === "string" ? d : d.toISOString().slice(0,10));
+
+function allDates() {
+  const res = [], cur = new Date(START), end = new Date(END);
+  while (cur <= end) { res.push(toKey(new Date(cur))); cur.setDate(cur.getDate()+1); }
+  return res;
+}
+
+function monOfWeek(dateStr) {
+  const d = new Date(dateStr), day = d.getDay();
+  d.setDate(d.getDate() + (day===0 ? -6 : 1-day));
+  return toKey(d);
+}
+
+function buildWeeks(dates) {
+  const wks = {};
+  dates.forEach(d => {
+    const w = monOfWeek(d);
+    if (!wks[w]) wks[w] = [];
+    wks[w].push(d);
+  });
+  return wks;
+}
+
+const ALL_DATES = allDates();
+const WEEKS     = buildWeeks(ALL_DATES);
+const WEEK_KEYS = Object.keys(WEEKS).sort();
+
+function kiminiPts(daily, weekDays) {
+  const n = weekDays.filter(d => daily[d]?.kimini).length;
+  if (weekDays.length >= 7 && n === 7) return 10;
+  if (n >= 5) return 6;
+  return 0;
+}
+
+function fmtDate(s) {
+  const d = new Date(s);
+  return `${d.getMonth()+1}月${d.getDate()}日（${DAY_JA[d.getDay()]}）`;
+}
+function fmtShort(s) {
+  const d = new Date(s);
+  return `${d.getMonth()+1}/${d.getDate()}`;
+}
+
+const EMPTY = { daily:{}, weeklyBonus:{}, cashUsed:0, videoUsed:{} };
+
+// ─── Cloudflare KV 読み書き ────────────────────────────────────────────────
+async function kvGet() {
+  try {
+    const r = await fetch(WORKER_URL);
+    if (!r.ok) return { ...EMPTY };
+    const json = await r.json();
+    return json || { ...EMPTY };
+  } catch(e) {
+    console.error("読み込みエラー:", e);
+    return { ...EMPTY };
+  }
+}
+
+async function kvSet(data) {
+  try {
+    await fetch(WORKER_URL, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    });
+  } catch(e) {
+    console.error("保存エラー:", e);
+  }
+}
+
+// ─── Root ─────────────────────────────────────────────────────────────────────
+function App() {
+  const [tab, setTab]       = useState("record");
+  const [selDate, setSelDate] = useState(() => {
+    const t = toKey(new Date());
+    return ALL_DATES.includes(t) ? t : ALL_DATES[0];
+  });
+  const [data, setData]     = useState(null);
+  const [loading, setLoad]  = useState(true);
+  const [saved, setSaved]   = useState(false);
+  const [saveErr, setSaveErr] = useState(false);
+
+  useEffect(() => {
+    kvGet().then(d => {
+      setData(d);
+      setLoad(false);
+    });
+  }, []);
+
+  const save = async (nd) => {
+    setData(nd);
+    await kvSet(nd);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1200);
+  };
+
+  const toggle = (actId) => {
+    const nd = { ...data, daily: { ...data.daily, [selDate]: { ...(data.daily[selDate]||{}) } } };
+    nd.daily[selDate][actId] = !nd.daily[selDate][actId];
+    save(nd);
+  };
+
+  const toggleBonus = (wk) => {
+    const nd = { ...data, weeklyBonus: { ...data.weeklyBonus, [wk]: { ...(data.weeklyBonus[wk]||{}) } } };
+    nd.weeklyBonus[wk].eitango = !nd.weeklyBonus[wk]?.eitango;
+    save(nd);
+  };
+
+  const calc = () => {
+    if (!data) return { earned:0, usedCash:0, usedVideo:0, used:0, balance:0 };
+    let earned = 0;
+    ALL_DATES.forEach(d => {
+      const log = data.daily[d] || {};
+      ACTS.forEach(a => { if (a.pts>0 && log[a.id]) earned += a.pts; });
+    });
+    WEEK_KEYS.forEach(wk => {
+      earned += kiminiPts(data.daily, WEEKS[wk]);
+      if (data.weeklyBonus[wk]?.eitango) earned += 3;
+    });
+    const usedCash  = data.cashUsed || 0;
+    const usedVideo = Object.values(data.videoUsed||{}).reduce((s,h)=>s+h*2,0);
+    return { earned, usedCash, usedVideo, used: usedCash+usedVideo, balance: earned-usedCash-usedVideo };
+  };
+
+  if (loading) return (
+    <div style={{ display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",
+      background:"linear-gradient(135deg,#fef9f0,#f0f9fe)", fontSize:"1.1rem", color:"#2d4059" }}>
+      🌸 よみこみちゅう…
+    </div>
+  );
+
+  const pts = calc();
+
+  const s = {
+    wrap: { fontFamily:"'Hiragino Maru Gothic Pro','Rounded Mplus 1c','Zen Maru Gothic',sans-serif",
+            background:"linear-gradient(150deg,#fef9f0 0%,#edf7ff 60%,#f3f0ff 100%)",
+            minHeight:"100vh", paddingBottom:60 },
+    hdr: { background:"#1e3350", padding:"14px 18px", textAlign:"center", color:"white",
+           boxShadow:"0 2px 12px rgba(0,0,0,0.18)" },
+    hdrSub: { fontSize:"0.62rem", letterSpacing:"3px", opacity:0.5, marginBottom:3 },
+    hdrTitle: { fontSize:"1.25rem", fontWeight:700 },
+    statsBar: { background:"white", display:"grid", gridTemplateColumns:"repeat(4,1fr)",
+                gap:0, boxShadow:"0 2px 10px rgba(0,0,0,0.08)" },
+    statLbl: { fontSize:"0.6rem", color:"#bbb", marginBottom:1 },
+    statVal: (color) => ({ fontSize:"1.35rem", fontWeight:900, color, lineHeight:1 }),
+    statUnit: { fontSize:"0.65rem", fontWeight:400, marginLeft:1 },
+    savedPill: (show) => ({
+      position:"fixed", top:12, right:14, background:"#3aafa9", color:"white",
+      padding:"5px 14px", borderRadius:20, fontSize:"0.72rem", fontWeight:700,
+      opacity: show?1:0, transition:"opacity 0.3s", zIndex:999, pointerEvents:"none"
+    }),
+    tabBar: { display:"flex", background:"white", borderBottom:"1px solid #efefef" },
+    tab: (active) => ({
+      flex:1, padding:"11px 0", border:"none", background:"none", cursor:"pointer",
+      fontFamily:"inherit", fontSize:"0.72rem", fontWeight:700,
+      color: active?"#1e3350":"#c0c0c0",
+      borderBottom: active?"3px solid #1e3350":"3px solid transparent", marginBottom:-1
+    }),
+    content: { padding:"14px 14px 0" },
+  };
+
+  return (
+    <div style={s.wrap}>
+      <div style={s.savedPill(saved)}>✓ 保存済み</div>
+
+      <div style={s.hdr}>
+        <div style={s.hdrSub}>SPRING BREAK 2026 · 3/19〜4/7 · 20日間</div>
+        <div style={s.hdrTitle}>🌸 春休みポイント管理表</div>
+      </div>
+
+      <div style={s.statsBar}>
+        {[
+          { label:"獲得合計", val:pts.earned,      unit:"pt",  color:"#1e3350" },
+          { label:"使用済み", val:pts.used,         unit:"pt",  color:"#f28b6e" },
+          { label:"残り",     val:pts.balance,      unit:"pt",  color:"#3aafa9" },
+          { label:"💴 現金",   val:pts.balance*30,  unit:"円",  color:"#d4900a" },
+        ].map(({ label, val, unit, color }, i) => (
+          <div key={i} style={{ textAlign:"center", padding:"10px 4px",
+            borderRight: i<3?"1px solid #f4f4f4":undefined }}>
+            <div style={s.statLbl}>{label}</div>
+            <div style={s.statVal(color)}>{val}<span style={s.statUnit}>{unit}</span></div>
+          </div>
+        ))}
+      </div>
+
+      <div style={s.tabBar}>
+        {[["record","📝 今日の記録"],["weekly","📊 週まとめ"],["use","🎁 使う"]].map(([id,lbl]) => (
+          <button key={id} onClick={()=>setTab(id)} style={s.tab(tab===id)}>{lbl}</button>
+        ))}
+      </div>
+
+      <div style={s.content}>
+        {tab==="record" && <RecordTab data={data} selDate={selDate} setSelDate={setSelDate} toggle={toggle} toggleBonus={toggleBonus} />}
+        {tab==="weekly" && <WeeklyTab data={data} />}
+        {tab==="use"    && <UseTab    data={data} save={save} pts={pts} />}
+      </div>
+    </div>
+  );
+}
+
+// ─── Record Tab ───────────────────────────────────────────────────────────────
+function RecordTab({ data, selDate, setSelDate, toggle, toggleBonus }) {
+  const log = data.daily[selDate] || {};
+  const wk  = monOfWeek(selDate);
+  const bonusOn = data.weeklyBonus[wk]?.eitango;
+  const dayPts = ACTS.filter(a=>a.pts>0&&log[a.id]).reduce((s,a)=>s+a.pts,0);
+
+  return (
+    <div>
+      <div style={{ display:"flex", alignItems:"center", gap:8, margin:"12px 0 14px" }}>
+        <NavBtn onClick={() => {
+          const i=ALL_DATES.indexOf(selDate); if(i>0) setSelDate(ALL_DATES[i-1]);
+        }}>‹</NavBtn>
+        <div style={{ flex:1, textAlign:"center", fontWeight:700, color:"#1e3350", fontSize:"0.95rem" }}>
+          {fmtDate(selDate)}
+        </div>
+        <NavBtn onClick={() => {
+          const i=ALL_DATES.indexOf(selDate); if(i<ALL_DATES.length-1) setSelDate(ALL_DATES[i+1]);
+        }}>›</NavBtn>
+      </div>
+
+      <div style={{ background:"linear-gradient(135deg,#1e3350,#2d5580)", borderRadius:14,
+        padding:"11px 18px", marginBottom:14, display:"flex", justifyContent:"space-between",
+        alignItems:"center", color:"white", boxShadow:"0 3px 12px rgba(30,51,80,0.22)" }}>
+        <span style={{ fontSize:"0.82rem", opacity:0.85 }}>今日のポイント合計</span>
+        <span style={{ fontWeight:900, fontSize:"1.3rem" }}>
+          {dayPts} <span style={{ fontWeight:400, fontSize:"0.8rem" }}>pt</span>
+          {dayPts>0&&" 🎉"}
+        </span>
+      </div>
+
+      {["英語","国語"].map(cat => {
+        const catColor = cat==="英語" ? "#3aafa9" : "#7c6ea0";
+        return (
+          <div key={cat} style={{ marginBottom:14 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+              <span style={{ background:catColor, color:"white", borderRadius:20,
+                padding:"2px 12px", fontSize:"0.68rem", fontWeight:700 }}>{cat}</span>
+            </div>
+            {ACTS.filter(a=>a.cat===cat).map(act => {
+              const done = !!log[act.id];
+              return (
+                <div key={act.id} onClick={()=>toggle(act.id)}
+                  style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px",
+                    background: done ? (cat==="英語"?"#e8faf8":"#f3f0ff") : "white",
+                    borderRadius:12, marginBottom:7, cursor:"pointer",
+                    border: `2px solid ${done ? catColor : "#ebebeb"}`,
+                    transition:"all 0.13s", boxShadow: done?"0 2px 8px rgba(0,0,0,0.07)":"none" }}>
+                  <span style={{ fontSize:"1.35rem" }}>{act.emoji}</span>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontWeight:700, fontSize:"0.85rem", color:"#1e3350" }}>{act.label}</div>
+                    <div style={{ fontSize:"0.7rem", color:"#aaa" }}>{act.desc}</div>
+                  </div>
+                  <div style={{ fontWeight:900, fontSize:"0.82rem", color: catColor, minWidth:44, textAlign:"right" }}>
+                    {act.pts>0 ? `＋${act.pts}pt` : <span style={{ fontSize:"0.68rem", color:"#bbb" }}>週計算</span>}
+                  </div>
+                  <CheckCircle checked={done} color={catColor} />
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+
+      <div style={{ background:"linear-gradient(135deg,#fffbee,#fff8e1)", border:"2px dashed #e8a020",
+        borderRadius:14, padding:"14px" }}>
+        <div style={{ fontWeight:700, color:"#7a5900", fontSize:"0.82rem", marginBottom:4 }}>
+          🌟 英単語 週間ボーナス（この週）
+        </div>
+        <div style={{ fontSize:"0.73rem", color:"#a07000", marginBottom:10 }}>
+          7日間連続でこなし、全単語テストに合格したら ＋3pt！
+        </div>
+        <div onClick={()=>toggleBonus(wk)}
+          style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px",
+            background: bonusOn?"#fff3cd":"white", borderRadius:10,
+            border:`2px solid ${bonusOn?"#e8a020":"#eee"}`, cursor:"pointer" }}>
+          <span style={{ fontSize:"1.2rem" }}>🎯</span>
+          <div style={{ flex:1, fontWeight:700, fontSize:"0.83rem", color:"#7a5900" }}>
+            ボーナス達成！（週のどこかで記録）
+          </div>
+          <CheckCircle checked={bonusOn} color="#e8a020" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Weekly Tab ───────────────────────────────────────────────────────────────
+function WeeklyTab({ data }) {
+  return (
+    <div>
+      {WEEK_KEYS.map((wk, wi) => {
+        const days = WEEKS[wk];
+        const kCount = days.filter(d=>data.daily[d]?.kimini).length;
+        const kPts   = kiminiPts(data.daily, days);
+        const bonus  = data.weeklyBonus[wk]?.eitango;
+
+        let wkPts = 0;
+        days.forEach(d => {
+          const log = data.daily[d]||{};
+          ACTS.forEach(a => { if(a.pts>0&&log[a.id]) wkPts+=a.pts; });
+        });
+        wkPts += kPts;
+        if (bonus) wkPts += 3;
+
+        const d0 = new Date(days[0]), d1 = new Date(days[days.length-1]);
+        const label = `第${wi+1}週　${d0.getMonth()+1}/${d0.getDate()}（${DAY_JA[d0.getDay()]}）〜${d1.getMonth()+1}/${d1.getDate()}（${DAY_JA[d1.getDay()]}）`;
+
+        return (
+          <div key={wk} style={{ background:"white", borderRadius:16, padding:"16px 16px 14px",
+            marginBottom:14, boxShadow:"0 2px 10px rgba(0,0,0,0.07)" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+              <div style={{ fontWeight:700, color:"#1e3350", fontSize:"0.82rem" }}>{label}</div>
+              <div style={{ background:"#1e3350", color:"white", borderRadius:20,
+                padding:"4px 14px", fontWeight:900, fontSize:"0.85rem" }}>{wkPts}pt</div>
+            </div>
+
+            <div style={{ display:"grid", gridTemplateColumns:`repeat(${days.length},1fr)`, gap:4, marginBottom:12 }}>
+              {days.map(d => {
+                const log = data.daily[d]||{};
+                const doneCount = ACTS.filter(a=>a.pts>0&&log[a.id]).length;
+                const hasKimini = !!log.kimini;
+                const full = doneCount>=5;
+                const day = new Date(d);
+                return (
+                  <div key={d} style={{ textAlign:"center" }}>
+                    <div style={{ fontSize:"0.58rem", color:"#bbb" }}>{DAY_JA[day.getDay()]}</div>
+                    <div style={{ fontSize:"0.7rem", color:"#777", marginBottom:3 }}>{day.getDate()}</div>
+                    <div style={{ height:34, borderRadius:8,
+                      background: doneCount===0 ? "#f5f5f5" :
+                                  full ? "linear-gradient(135deg,#3aafa9,#2d9090)" :
+                                  doneCount>=3 ? "#7ed4cf" : "#c4edeb",
+                      display:"flex", flexDirection:"column", alignItems:"center",
+                      justifyContent:"center", transition:"background 0.2s" }}>
+                      {doneCount>0 && <span style={{ fontSize:"0.65rem", fontWeight:900, color:"white" }}>{doneCount}</span>}
+                      {hasKimini && <span style={{ fontSize:"0.55rem" }}>🎤</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <StatRow icon="🎤" label={`kimini達成：${kCount}日 ${kCount<5?"（4日以下はポイントなし）":""}`}
+              right={<span style={{ color: kPts>=10?"#d4900a": kPts>=6?"#3aafa9":"#ccc", fontWeight:900 }}>
+                {kPts>0 ? `${kPts}pt` : "−"} {kPts>=10&&"🏆"} {kPts===6&&"🌟"}
+              </span>} bg="#f0fdfb" />
+
+            {bonus && <StatRow icon="🌟" label="英単語ボーナス達成"
+              right={<span style={{ color:"#d4900a", fontWeight:900 }}>＋3pt</span>} bg="#fffbee" />}
+
+            <div style={{ marginTop:8, display:"flex", flexWrap:"wrap", gap:6 }}>
+              {ACTS.filter(a=>a.pts>0).map(a => {
+                const cnt = days.filter(d=>data.daily[d]?.[a.id]).length;
+                return cnt>0 ? (
+                  <span key={a.id} style={{ fontSize:"0.7rem", background:"#f4f4f4",
+                    borderRadius:20, padding:"3px 10px", color:"#555" }}>
+                    {a.emoji} ×{cnt}日 ({cnt*a.pts}pt)
+                  </span>
+                ) : null;
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Use Tab ──────────────────────────────────────────────────────────────────
+function UseTab({ data, save, pts }) {
+  const [cashAmt, setCashAmt] = useState("");
+  const [videoWk, setVideoWk] = useState(WEEK_KEYS[0]);
+  const [videoHr, setVideoHr] = useState(1);
+  const [msg, setMsg] = useState("");
+
+  const notice = (m) => { setMsg(m); setTimeout(()=>setMsg(""),2500); };
+
+  const addCash = () => {
+    const n = parseInt(cashAmt);
+    if (!n||n<=0) return notice("ポイント数を入力してね");
+    if (n > pts.balance) return notice(`残り${pts.balance}ptしかないよ！`);
+    save({ ...data, cashUsed:(data.cashUsed||0)+n });
+    setCashAmt("");
+    notice(`${n}pt → ${n*30}円に交換したよ！`);
+  };
+
+  const addVideo = () => {
+    const hr = parseFloat(videoHr)||0;
+    if (hr<=0) return notice("時間を入力してね");
+    const currHr = data.videoUsed[videoWk]||0;
+    if (currHr+hr > 7) return notice(`今週はあと${7-currHr}時間しか見られないよ！`);
+    const needPts = hr*2;
+    if (needPts > pts.balance) return notice(`${needPts}pt必要だけど残り${pts.balance}ptしかないよ！`);
+    save({ ...data, videoUsed:{ ...data.videoUsed, [videoWk]:(currHr+hr) } });
+    notice(`${hr}時間記録したよ（${needPts}pt使用）`);
+  };
+
+  return (
+    <div>
+      <div style={{ background:"linear-gradient(135deg,#1e3350,#2d5580)", color:"white",
+        borderRadius:14, padding:"14px 18px", marginBottom:14,
+        display:"flex", justifyContent:"space-between", alignItems:"center",
+        boxShadow:"0 3px 12px rgba(30,51,80,0.22)" }}>
+        <span style={{ fontSize:"0.82rem", opacity:0.85 }}>残りポイント</span>
+        <span style={{ fontWeight:900, fontSize:"1.2rem" }}>
+          {pts.balance}pt　<span style={{ fontSize:"0.9rem", opacity:0.8 }}>({pts.balance*30}円分)</span>
+        </span>
+      </div>
+
+      {msg && <div style={{ background:"#3aafa9", color:"white", borderRadius:10,
+        padding:"10px 14px", marginBottom:12, fontSize:"0.82rem", fontWeight:700,
+        textAlign:"center", boxShadow:"0 2px 8px rgba(58,175,169,0.3)" }}>{msg}</div>}
+
+      <Card title="💴 現金に交換する" sub="1ポイント＝30円">
+        <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+          <input type="number" value={cashAmt} onChange={e=>setCashAmt(e.target.value)}
+            placeholder="ポイント数を入力" min={1}
+            style={{ flex:1, padding:"10px 12px", border:"2px solid #e8e8e8",
+              borderRadius:10, fontFamily:"inherit", fontSize:"0.9rem", outline:"none" }} />
+          <ActionBtn color="#1e3350" onClick={addCash}>交換</ActionBtn>
+        </div>
+        {cashAmt&&parseInt(cashAmt)>0 && (
+          <div style={{ fontSize:"0.75rem", color:"#3aafa9", marginBottom:8 }}>
+            → {parseInt(cashAmt)*30}円になるよ
+          </div>
+        )}
+        <div style={{ fontSize:"0.72rem", color:"#f28b6e" }}>
+          累計交換済み：{data.cashUsed}pt（{data.cashUsed*30}円）
+        </div>
+      </Card>
+
+      <Card title="📺 動画を見る" sub="1時間＝2ポイント　週最大7時間まで（月〜日）">
+        <div style={{ fontSize:"0.72rem", color:"#f28b6e", marginBottom:10 }}>
+          ※土曜夜8〜10時の配信は2時間分消費（4pt）
+        </div>
+        <div style={{ marginBottom:10 }}>
+          <select value={videoWk} onChange={e=>setVideoWk(e.target.value)}
+            style={{ width:"100%", padding:"9px 12px", border:"2px solid #e8e8e8",
+              borderRadius:10, fontFamily:"inherit", fontSize:"0.82rem",
+              marginBottom:8, background:"white" }}>
+            {WEEK_KEYS.map((wk,i)=>{
+              const days=WEEKS[wk];
+              const used=data.videoUsed[wk]||0;
+              return <option key={wk} value={wk}>
+                第{i+1}週 {fmtShort(days[0])}〜{fmtShort(days[days.length-1])}　✔ {used}/7時間
+              </option>;
+            })}
+          </select>
+          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+            <input type="number" value={videoHr} onChange={e=>setVideoHr(e.target.value)}
+              min={0.5} max={7} step={0.5}
+              style={{ flex:1, padding:"10px 12px", border:"2px solid #e8e8e8",
+                borderRadius:10, fontFamily:"inherit", fontSize:"0.9rem", outline:"none" }} />
+            <span style={{ fontSize:"0.85rem", color:"#888", whiteSpace:"nowrap" }}>時間</span>
+            <ActionBtn color="#3aafa9" onClick={addVideo}>記録</ActionBtn>
+          </div>
+        </div>
+
+        {WEEK_KEYS.map((wk,i)=>{
+          const days=WEEKS[wk];
+          const used=data.videoUsed[wk]||0;
+          const pct=Math.min(used/7*100,100);
+          const over=used>6.5;
+          const d0=new Date(days[0]),d1=new Date(days[days.length-1]);
+          return (
+            <div key={wk} style={{ marginBottom:10 }}>
+              <div style={{ display:"flex", justifyContent:"space-between",
+                fontSize:"0.7rem", color: over?"#f28b6e":"#777", marginBottom:4 }}>
+                <span>第{i+1}週 {d0.getMonth()+1}/{d0.getDate()}〜{d1.getMonth()+1}/{d1.getDate()}</span>
+                <span style={{ fontWeight:700 }}>{used}h / 7h　（{used*2}pt使用）</span>
+              </div>
+              <div style={{ height:9, background:"#f0f0f0", borderRadius:5 }}>
+                <div style={{ height:"100%", width:`${pct}%`, borderRadius:5, transition:"width 0.4s",
+                  background: pct>=100?"#f28b6e":pct>=70?"#e8a020":"#3aafa9" }} />
+              </div>
+            </div>
+          );
+        })}
+      </Card>
+    </div>
+  );
+}
+
+// ─── Shared components ────────────────────────────────────────────────────────
+function CheckCircle({ checked, color }) {
+  return (
+    <div style={{ width:26, height:26, borderRadius:"50%", flexShrink:0,
+      background: checked ? color : "#ebebeb",
+      display:"flex", alignItems:"center", justifyContent:"center",
+      color:"white", fontSize:"0.85rem", fontWeight:700, transition:"background 0.15s" }}>
+      {checked && "✓"}
+    </div>
+  );
+}
+
+function NavBtn({ onClick, children }) {
+  return (
+    <button onClick={onClick}
+      style={{ border:"none", background:"#f0f0f0", borderRadius:10,
+        padding:"7px 14px", cursor:"pointer", fontSize:"1.1rem",
+        color:"#1e3350", fontWeight:700, lineHeight:1 }}>
+      {children}
+    </button>
+  );
+}
+
+function ActionBtn({ onClick, color, children }) {
+  return (
+    <button onClick={onClick}
+      style={{ padding:"10px 18px", background:color, color:"white", border:"none",
+        borderRadius:10, cursor:"pointer", fontFamily:"inherit",
+        fontWeight:700, fontSize:"0.85rem", whiteSpace:"nowrap" }}>
+      {children}
+    </button>
+  );
+}
+
+function StatRow({ icon, label, right, bg }) {
+  return (
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+      padding:"7px 12px", background: bg||"#f8f8f8", borderRadius:8, marginBottom:5,
+      fontSize:"0.78rem", color:"#2d4059" }}>
+      <span>{icon} {label}</span>
+      {right}
+    </div>
+  );
+}
+
+function Card({ title, sub, children }) {
+  return (
+    <div style={{ background:"white", borderRadius:14, padding:"16px",
+      marginBottom:14, boxShadow:"0 2px 10px rgba(0,0,0,0.06)" }}>
+      <div style={{ fontWeight:700, color:"#1e3350", fontSize:"0.88rem", marginBottom: sub?4:10 }}>{title}</div>
+      {sub && <div style={{ fontSize:"0.72rem", color:"#aaa", marginBottom:12 }}>{sub}</div>}
+      {children}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
